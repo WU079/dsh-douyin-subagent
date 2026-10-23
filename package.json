@@ -1,0 +1,58 @@
+{
+  "name": "dsh-douyin-subagent",
+  "version": "0.1.0",
+  "description": "Douyin scroller for DSH: a valley-time subagent that browses Douyin, reads comments and reports back — plus dy_* tools and a valley-time timer.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "douyin",
+    "subagent",
+    "mcp"
+  ],
+  "license": "MIT",
+  "author": "WU079",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WU079/dsh-douyin-subagent.git"
+  },
+  "homepage": "https://github.com/WU079/dsh-douyin-subagent#readme",
+  "bugs": {
+    "url": "https://github.com/WU079/dsh-douyin-subagent/issues"
+  },
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "lib",
+    "prompts",
+    "vendor",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

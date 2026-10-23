@@ -1,0 +1,7 @@
+node_modules/
+*.log
+cookies.txt
+cookies*.json
+browser/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,17 @@
+# ============================================================================
+# dsh-douyin-subagent —— DSH bundle patch（插件自带的挂载声明）
+# ============================================================================
+# 装上之后，profile 只要在 `dsh.profile.bundles` 里列出本包名即生效：
+#
+#   dsh plugin --profile web add link:F:\大肥鱼\douyin\plugin     # 本地开发
+#   dsh plugin --profile web add dsh-douyin-subagent            # 发到 npm 之后
+#
+# 组成顺序：每个 bundle 的 patch 按 `dsh.profile.bundles` 顺序叠，再叠 profile 自己那层。
+# ============================================================================
+
+- insert:
+    - id: douyin-scroll
+      name: dsh-douyin-subagent
+      config:
+        # 真正的用户配置在家目录的 config.json 里（dy_config 工具可改），这里只放默认值
+        enabled: true

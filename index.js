@@ -32,7 +32,7 @@ import { WINDOWS, dayKey, inValley, inWindow, readJson, stateDirOf, writeJson } 
 import { ensureBrowser, ensureMcpServer, exportCookies, mcpUrlOf } from './lib/douyin.mjs'
 
 export const name = 'douyin-scroll'
-export const inject = ['tools', 'subagents', 'agents']
+export const inject = ['webServer', 'tools', 'subagents', 'agents']
 
 const DEFAULTS = {
   enabled: true,
@@ -540,6 +540,126 @@ export function apply(ctx, rawConfig) {
     ctx.effect(() => () => clearInterval(timer), 'douyin-duty: 谷时定时器')
     setTimeout(tick, 15_000).unref?.()
   } catch (e) { log(`定时器没起来：${e?.message ?? e}`) }
+
+
+  /* ─────────────── 设置页（client.js 用的 HTTP 接口） ─────────────── */
+
+  const sendJson = (res, code, obj) => {
+    try {
+      res.statusCode = code
+      res.setHeader('content-type', 'application/json; charset=utf-8')
+      res.end(JSON.stringify(obj))
+    } catch { /* 客户端断了就算了 */ }
+  }
+  const readBody = (req) => new Promise((resolve) => {
+    let buf = ''
+    req.setEncoding?.('utf8')
+    req.on('data', (c) => { buf += c; if (buf.length > 256_000) req.destroy() })
+    req.on('end', () => { try { resolve(JSON.parse(buf || '{}')) } catch { resolve({}) } })
+    req.on('error', () => resolve({}))
+  })
+
+  const SETTING_KEYS = [
+    'enabled', 'autoMode', 'noon', 'night', 'perDay', 'gapMin', 'direction', 'keywords',
+    'perScan', 'ownerName', 'targetSession', 'reportLevel', 'cookieFile', 'browserPort', 'mcpPort', 'mcpExe',
+  ]
+  const clampInt = (v, lo, hi, dft) => {
+    const n = Math.round(Number(v))
+    if (!Number.isFinite(n)) return dft
+    return Math.max(lo, Math.min(hi, n))
+  }
+  const sanitize = (patch) => {
+    const out = {}
+    for (const k of SETTING_KEYS) {
+      if (!(patch && k in patch)) continue
+      const v = patch[k]
+      if (k === 'enabled' || k === 'noon' || k === 'night') out[k] = Boolean(v)
+      else if (k === 'perDay') out[k] = clampInt(v, 0, 10, DEFAULTS.perDay)
+      else if (k === 'perScan') out[k] = clampInt(v, 1, 5, DEFAULTS.perScan)
+      else if (k === 'gapMin') out[k] = clampInt(v, 0, 1440, DEFAULTS.gapMin)
+      else if (k === 'mcpPort') out[k] = clampInt(v, 1, 65535, DEFAULTS.mcpPort)
+      else if (k === 'browserPort') out[k] = clampInt(v, 1, 65535, DEFAULTS.browserPort)
+      else if (k === 'autoMode') out[k] = ['manual', 'valley', 'always'].includes(String(v)) ? String(v) : 'valley'
+      else if (k === 'reportLevel') out[k] = ['full', 'brief', 'off'].includes(String(v)) ? String(v) : 'full'
+      else if (k === 'keywords') {
+        const arr = Array.isArray(v) ? v : String(v ?? '').split(/[,，、\s]+/)
+        out[k] = arr.map((x) => String(x).trim()).filter(Boolean).slice(0, 20)
+      } else out[k] = String(v ?? '').trim()
+    }
+    return out
+  }
+  const configView = () => {
+    refresh()
+    return {
+      ...cfg,
+      configFile: cfgFile,
+      stateDir,
+      defaults: DEFAULTS,
+      windows: WINDOWS,
+      account: (() => {
+        try {
+          const raw = readFileSync(join(stateDir, 'profile.json'), 'utf8')
+          return JSON.parse(raw)
+        } catch { return null }
+      })(),
+      loggedIn: existsSync(cookieFile),
+    }
+  }
+  const statusView = async () => {
+    refresh()
+    const cur = dayOf()
+    let server = { ok: false }
+    try { server = await ensureServer() } catch (e) { server = { ok: false, error: String(e?.message ?? e) } }
+    const out = existsSync(outDir) ? readdirSync(outDir).filter((f) => f.endsWith('.md')).sort().pop() : null
+    return {
+      ok: true,
+      version: (() => { try { return JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8')).version } catch { return '' } })(),
+      enabled: cfg.enabled,
+      autoMode: cfg.autoMode,
+      mcpPort: cfg.mcpPort,
+      mcp: server,
+      loggedIn: existsSync(cookieFile),
+      today: { day: cur.day || dayKey(now()), rounds: cur.count || 0, perDay: cfg.perDay, windows: cur.windows || {} },
+      windows: Object.fromEntries(openWindows().map(([k, w]) => [k, { label: w.label, start: w.start, end: w.end, open: inWindow(now(), w) }])),
+      lastRunAt: cur.lastRunAt || null,
+      lastReport: out ? join(outDir, out) : null,
+      stateDir,
+    }
+  }
+
+  const handleHttp = async (req, res, url) => {
+    const p = url.pathname
+    if (req.method === 'GET' && p === '/api/douyin-duty/config') {
+      return sendJson(res, 200, { ok: true, config: configView() })
+    }
+    if (req.method === 'GET' && p === '/api/douyin-duty/status') {
+      return sendJson(res, 200, await statusView())
+    }
+    if (req.method === 'POST' && p === '/api/douyin-duty/config') {
+      const body = await readBody(req)
+      const patch = sanitize(body)
+      if (!Object.keys(patch).length) return sendJson(res, 400, { ok: false, error: '没有可改的字段' })
+      const next = { ...readJson(cfgFile, {}), ...patch }
+      writeJson(cfgFile, next)
+      Object.assign(cfg, DEFAULTS, next)
+      syncMcp()
+      log('设置页改了：' + Object.keys(patch).join(','))
+      return sendJson(res, 200, { ok: true, config: configView() })
+    }
+    return sendJson(res, 404, { ok: false, error: 'unknown ' + req.method + ' ' + p })
+  }
+
+  try {
+    ctx.effect(() => ctx.webServer.register({
+      kind: 'prefix',
+      path: '/api/douyin-duty',
+      handler: async (req, res) => {
+        try { await handleHttp(req, res, new URL(req.url, 'http://127.0.0.1')) } catch (e) {
+          sendJson(res, 500, { ok: false, error: e?.message ?? String(e) })
+        }
+      },
+    }), 'douyin-duty: /api/douyin-duty 路由')
+  } catch (e) { log('设置页路由没挂上：' + (e?.message ?? e)) }
 
   log(`douyin-scroll 已加载（家目录 ${stateDir}）`)
 }

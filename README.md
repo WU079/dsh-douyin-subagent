@@ -185,3 +185,15 @@ dsh plugin --profile <你的 profile> add github:WU079/dsh-douyin-subagent
 ## 许可
 
 MIT，见 [LICENSE](LICENSE)。
+
+## 设置里的控制面板（0.1.1 起）
+
+装好之后，进 **设置 → 刷抖音**，可以改：
+
+- 总开关（关掉后定时器不动，`dy_*` 工具和手动 `/刷` 还能用）
+- 自动模式：只手动 / 只在谷时 / 全天；中午、晚上两个谷时开关
+- 每天最多刷几轮、两轮之间至少隔多少分钟、每轮挑几条
+- 方向、关键词候选、报告里对你的称呼、报告详细程度
+- 底部一行状态：今天第几轮、MCP 在不在线、登录态、上次刷的时间、最近一份报告
+
+面板走插件自己挂的 `/api/douyin-duty/*` 路由读写 `$DSH_HOME/douyin-duty/config.json`，和 `dy_config` 工具改的是同一份。浏览器半端 `client.js` 的约定抄自 `dsh-bili-subagent`（`window.__ModuleLoader__.load` + `slots.inject('settings.section')`）。

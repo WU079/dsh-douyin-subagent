@@ -197,3 +197,22 @@ MIT，见 [LICENSE](LICENSE)。
 - 底部一行状态：今天第几轮、MCP 在不在线、登录态、上次刷的时间、最近一份报告
 
 面板走插件自己挂的 `/api/douyin-duty/*` 路由读写 `$DSH_HOME/douyin-duty/config.json`，和 `dy_config` 工具改的是同一份。浏览器半端 `client.js` 的约定抄自 `dsh-bili-subagent`（`window.__ModuleLoader__.load` + `slots.inject('settings.section')`）。
+
+## 评论/回复：页面签名直发（0.2.0 起）
+
+MCP 的 `post_video_comment` 要 `ticket/ts_sign`（IM 会话签名），纯 cookie 登录拿不到，所以 `dy_comment` 会先走一条更简单的路：
+
+1. 你有一个**已登录 douyin.com** 的 Chromium/Edge，开着远程调试端口（`cdpPort`，默认 `9333`）：
+   ```
+   "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --remote-debugging-port=9333 ^
+     --user-data-dir=F:\douyin-browser https://www.douyin.com/
+   ```
+   （用着刷视频的窗口也行，只要带 `--remote-debugging-port`）
+2. 插件连上 CDP，在页面上下文里调 `window.byted_acrawler.frontierSign` 生成 `X-Bogus`，再用页面自己的 `fetch`
+   发 `POST /aweme/v1/web/comment/publish`。cookie、指纹、签名都是真的，等同网页自己发评论。
+3. 实测：连续 5 条回复（含楼中楼 `reply_id`）全部 HTTP 200、返回 `cid`，没有触发滑块/短信验证；
+   `dy_comment { "aweme_id": "...", "content": "...", "reply_id": "..." }` 的返回里 `via` 会是 `page`。
+4. 页面不在（CDP 连不上）时自动退回 MCP——那条路通常仍会失败，但不会让工具直接崩。
+
+只用最小参数（`device_platform` / `aid` / `aweme_id` / `reply_id` + `X-Bogus`）即可，不需要 msToken、verifyFp 那些模板参数；
+真遇到风控（返回非 200 或需要验证），工具会把响应片段抛出来，这会儿应该停下来人工处理，别硬重试。

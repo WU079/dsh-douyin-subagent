@@ -28,6 +28,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { McpHttp } from './lib/mcpHttp.mjs'
+import { publishComment as publishCommentViaPage } from './lib/webComment.mjs'
 import { WINDOWS, dayKey, inValley, inWindow, readJson, stateDirOf, writeJson } from './lib/state.mjs'
 import { ensureBrowser, ensureMcpServer, exportCookies, mcpUrlOf } from './lib/douyin.mjs'
 
@@ -51,6 +52,7 @@ const DEFAULTS = {
   mcpPort: 18080,
   mcpToken: '',                  // 留空 = 首次运行随机生成并存进家目录 config.json
   browserPort: 9222,
+  cdpPort: 9333,                  // 已登录 douyin.com 的浏览器 CDP 端口（评论走签名直发时用）
   browserProfile: '',            // 留空 = <家目录>/browser
   cookieFile: '',                // 留空 = <家目录>/cookies.txt
   // 投递
@@ -74,6 +76,7 @@ export const Config = !z ? undefined : z.object({
   mcpPort: z.natural().default(18080).extra('volatile', true),
   mcpToken: z.string().default('').extra('volatile', true),
   browserPort: z.natural().default(9222).extra('volatile', true),
+  cdpPort: z.natural().default(9333).extra('volatile', true),
   browserProfile: z.string().default(DEFAULTS.browserProfile).extra('volatile', true),
   cookieFile: z.string().default(DEFAULTS.cookieFile).extra('volatile', true),
   targetSession: z.string().default('').extra('volatile', true),
@@ -391,11 +394,24 @@ export function apply(ctx, rawConfig) {
       const id = String(args?.aweme_id || '').trim()
       const content = String(args?.content || '').trim()
       if (!id || !content) return { ok: false, error: '缺少 aweme_id 或 content' }
+      // 优先：已登录页面里签名直发（不需要 ticket/ts_sign）
+      try {
+        const viaPage = await publishCommentViaPage({
+          port: Number(cfg.cdpPort) || 9333,
+          awemeId: id,
+          text: content,
+          replyId: args?.reply_id ? String(args.reply_id) : '',
+        })
+        log(`已发评论（aweme=${id} via 页面签名, cid=${viaPage.cid}）`)
+        return { ok: true, via: 'page', cid: viaPage.cid }
+      } catch (e) {
+        log(`页面签名直发失败，改试 MCP：${e?.message || e}`)
+      }
       const r = await callTool('post_video_comment', {
         aweme_id: id, content, ...(args?.reply_id ? { reply_id: String(args.reply_id) } : {}),
       })
-      log(`已发评论（aweme=${id}）`)
-      return { ok: true, result: r }
+      log(`已发评论（aweme=${id} via MCP）`)
+      return { ok: true, via: 'mcp', result: r }
     },
   })
 
@@ -561,7 +577,7 @@ export function apply(ctx, rawConfig) {
 
   const SETTING_KEYS = [
     'enabled', 'autoMode', 'noon', 'night', 'perDay', 'gapMin', 'direction', 'keywords',
-    'perScan', 'ownerName', 'targetSession', 'reportLevel', 'cookieFile', 'browserPort', 'mcpPort', 'mcpExe',
+    'perScan', 'ownerName', 'targetSession', 'reportLevel', 'cookieFile', 'browserPort', 'cdpPort', 'mcpPort', 'mcpExe',
   ]
   const clampInt = (v, lo, hi, dft) => {
     const n = Math.round(Number(v))
@@ -578,6 +594,7 @@ export function apply(ctx, rawConfig) {
       else if (k === 'perScan') out[k] = clampInt(v, 1, 5, DEFAULTS.perScan)
       else if (k === 'gapMin') out[k] = clampInt(v, 0, 1440, DEFAULTS.gapMin)
       else if (k === 'mcpPort') out[k] = clampInt(v, 1, 65535, DEFAULTS.mcpPort)
+      else if (k === 'cdpPort') out[k] = clampInt(v, 1, 65535, DEFAULTS.cdpPort)
       else if (k === 'browserPort') out[k] = clampInt(v, 1, 65535, DEFAULTS.browserPort)
       else if (k === 'autoMode') out[k] = ['manual', 'valley', 'always'].includes(String(v)) ? String(v) : 'valley'
       else if (k === 'reportLevel') out[k] = ['full', 'brief', 'off'].includes(String(v)) ? String(v) : 'full'

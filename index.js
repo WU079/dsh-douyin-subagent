@@ -32,6 +32,7 @@ import { publishComment as publishCommentViaPage } from './lib/webComment.mjs'
 import { WINDOWS, dayKey, inValley, inWindow, readJson, stateDirOf, writeJson } from './lib/state.mjs'
 import { ensureBrowser, ensureMcpServer, exportCookies, mcpUrlOf } from './lib/douyin.mjs'
 import { TESTED_MCP, normalizePolicy, verifyMcp } from './lib/mcpVersion.mjs'
+import { listInbox, readMessages, selfIdentity, sendDm } from './lib/dm.mjs'
 
 export const name = 'douyin-scroll'
 export const inject = ['webServer', 'tools', 'subagents', 'agents']
@@ -474,6 +475,78 @@ export function apply(ctx, rawConfig) {
       const images = Array.isArray(args?.images) ? args.images.filter(Boolean).map(String) : []
       if (!images.length) return { ok: false, error: '缺少 images' }
       return { ok: true, result: await callTool('publish_content', { ...base, images }) }
+    },
+  })
+
+  /* ─────────────── 私信（消息 tab） ───────────────
+   * 底层 MCP 在私信这块有三处坑（详见 lib/dm.mjs 顶部的注释）：
+   *   list_conversations 的 name 是 protobuf 原始字节、get_im_messages 恒空、
+   *   get_conversation_list 只是「按 uid 查单个会话」。所以统一走 lib/dm.mjs。
+   */
+
+  tool({
+    name: 'dy_inbox',
+    description: '读抖音私信会话列表（「消息」tab）：对方昵称、最后一条是谁说的、时间、私聊还是群聊。私信一律走这个 —— 底层 get_im_messages 恒返回空、list_conversations 的名字是 protobuf 乱码，别自己去拼 MCP。',
+    parameters: {
+      type: { type: 'number', description: '0 = 不限（默认）/ 1 = 只看私聊 / 2 = 只看群聊' },
+      limit: { type: 'number', description: '最多几条（默认 20）' },
+      names: { type: 'boolean', description: '是否解析昵称（默认 true；设 false 少一次请求，名字会退化成「用户xxx」）' },
+    },
+    async execute(args) {
+      refresh()
+      const self = await selfIdentity(callTool)
+      const r = await listInbox({
+        callTool, self,
+        type: Number(args?.type) || 0,
+        limit: Number(args?.limit) || 20,
+        names: args?.names !== false,
+      })
+      log(`私信：读到会话 ${r.count} 条`)
+      return { ok: true, ...r }
+    },
+  })
+
+  tool({
+    name: 'dy_messages',
+    description: '读抖音私信聊天记录（按会话 id 或昵称，昵称支持片段）。返回每条消息是谁说的（我/对方）、内容、时间；nextCursor 可以继续往前翻。会话 id 从 dy_inbox 拿。',
+    parameters: {
+      conversation: { type: 'string', description: '会话 id（形如 0:1:a:b）或昵称/昵称片段' },
+      count: { type: 'number', description: '最多几条（默认 30，上限 50）' },
+      cursor: { type: 'number', description: '翻页游标：0/不填 = 最新一页' },
+      unread_only: { type: 'boolean', description: '只看这个会话里未读的' },
+    },
+    async execute(args) {
+      refresh()
+      const key = String(args?.conversation || '').trim()
+      if (!key) return { ok: false, error: '缺少 conversation（会话 id 或昵称，先 dy_inbox 看看）' }
+      const self = await selfIdentity(callTool)
+      const r = await readMessages({
+        callTool, self,
+        conversation: key,
+        count: Number(args?.count) || 30,
+        cursor: Number(args?.cursor) || 0,
+        unreadOnly: Boolean(args?.unread_only),
+      })
+      return { ok: true, ...r }
+    },
+  })
+
+  tool({
+    name: 'dy_dm',
+    description: '给某个人发抖音私信（写操作 —— 只在本人明确让发的时候用；回复别人不涉及 @）。to 可以是数字 uid 或昵称/片段。',
+    parameters: {
+      to: { type: 'string', description: '发给谁：数字 uid / 昵称 / 昵称片段' },
+      content: { type: 'string', description: '私信正文（短、干净、像人说的话）' },
+    },
+    async execute(args) {
+      refresh()
+      const to = String(args?.to || '').trim()
+      const content = String(args?.content || '').trim()
+      if (!to || !content) return { ok: false, error: '缺少 to 或 content' }
+      const self = await selfIdentity(callTool)
+      const r = await sendDm({ callTool, self, to, content })
+      if (r.ok) log(`已发私信 → ${r.to?.name || r.to?.uid}`)
+      return r
     },
   })
 

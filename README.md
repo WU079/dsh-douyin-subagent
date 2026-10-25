@@ -10,8 +10,8 @@ English | [中文](#中文)
 
 ## What you get
 
-- **11 tools**: `dy_status` / `dy_config` / `dy_login` / `dy_search` / `dy_video` / `dy_comments` /
-  `dy_comment` / `dy_publish` / `dy_scan` / `dy_tools` / `dy_mcp`
+- **14 tools**: `dy_status` / `dy_config` / `dy_login` / `dy_search` / `dy_video` / `dy_comments` /
+  `dy_comment` / `dy_publish` / `dy_inbox` / `dy_messages` / `dy_dm` / `dy_scan` / `dy_tools` / `dy_mcp`
 - **Valley-time timer**: 13:00–15:00 and 19:00–10:00 (next day), weekends count as valley all day.
   At the appointed time it hands a trigger to the target session; the agent then runs `dy_scan` itself.
   `perDay` rounds per day, at least `gapMin` minutes apart.
@@ -137,6 +137,28 @@ Then restart DSH (or reload the profile) — the `dy_*` tools show up.
 | `triggerPrompt` | built-in | text handed to the session |
 | `reportLevel` | `full` | `full` / `brief` / `off` |
 
+## Direct messages
+
+`dy_inbox` / `dy_messages` / `dy_dm` handle the "Messages" tab. They are wrappers, because the upstream
+MCP is awkward here — all three symptoms verified against `v0.1.0`:
+
+| symptom | cause | what the plugin does |
+|---|---|---|
+| conversation list shows no names | `list_conversations` puts the participant **protobuf bytes** in `name` | extracts the `sec_uid`s and resolves nicknames via `get_im_user_info` |
+| `get_im_messages` returns `[]` although the chat has messages | broken in `v0.1.0` (same with `start_im_listen` running) | reads through `get_conversation_history` instead |
+| `get_conversation_list` fails with `missing ["to_user_id"]` | it is not a list tool, it queries one conversation by uid | never used |
+
+```jsonc
+// who wrote last, when, private or group
+{ "type": 0, "limit": 20 }                      // dy_inbox
+// by id (0:1:a:b) or by nickname fragment
+{ "conversation": "some nickname", "count": 30 } // dy_messages
+{ "to": "some nickname", "content": "..." }      // dy_dm — a write; only when you mean it
+```
+
+An empty inbox is reported with the three likely reasons (nobody has messaged yet / stale cookie /
+rate limit `409`) instead of a silent "nothing here".
+
 ## Notes & boundaries
 
 - **The MCP server is local-only.** The plugin spawns it with a random per-install bearer token bound to `127.0.0.1`.
@@ -163,8 +185,8 @@ MIT — see [LICENSE](LICENSE).
 
 ## 有什么
 
-- **11 个工具**：`dy_status` / `dy_config` / `dy_login` / `dy_search` / `dy_video` / `dy_comments` /
-  `dy_comment` / `dy_publish` / `dy_scan` / `dy_tools` / `dy_mcp`
+- **14 个工具**：`dy_status` / `dy_config` / `dy_login` / `dy_search` / `dy_video` / `dy_comments` /
+  `dy_comment` / `dy_publish` / `dy_inbox` / `dy_messages` / `dy_dm` / `dy_scan` / `dy_tools` / `dy_mcp`
 - **谷时定时器**：中午 13:00–15:00、夜里 19:00–次日 10:00，周末整天算谷时；到点往目标会话递一句话，
   agent 自己用 `dy_scan` 刷。每天 `perDay` 轮，两轮至少隔 `gapMin` 分钟。
 - **值班章程**：`prompts/duty.md`（家里 `$DSH_HOME/douyin-duty/duty.md` 优先，可自己改）。
@@ -262,6 +284,25 @@ dsh plugin --profile <你的 profile> add github:WU079/dsh-douyin-subagent
 
 `dy_config` 读写 `$DSH_HOME/douyin-duty/config.json`，字段见上方英文表格（同一张表）。
 其中 `mcpVersionCheck` 管 douyin-mcp 的版本闸（`strict` / `warn` / `off`，默认 `strict`，见「版本锁定」）。
+
+## 私信（0.2.3 起）
+
+`dy_inbox` / `dy_messages` / `dy_dm` 管「消息」tab。之所以要包一层，是因为底层 MCP 在私信这块很别扭
+（下面三条都是对着 `v0.1.0` 实测的）：
+
+| 症状 | 原因 | 插件怎么绕 |
+|---|---|---|
+| 会话列表里连名字都没有 | `list_conversations` 的 `name` 字段放的是参与者 **protobuf 原始字节**（JSON 里就是乱码） | 从字节里抠出 `sec_uid`，再用 `get_im_user_info` 换昵称 |
+| 会话里明明有消息，`get_im_messages` 却返回 `[]` | `v0.1.0` 上就是坏的（开着 `start_im_listen` 也一样） | 改走 `get_conversation_history` |
+| `get_conversation_list` 报 `missing ["to_user_id"]` | 它不是「列表」工具，是按 uid 查单个会话 | 不用它 |
+
+```jsonc
+{ "type": 0, "limit": 20 }                        // dy_inbox：最后一条谁说的、时间、私聊/群聊
+{ "conversation": "某个昵称", "count": 30 }        // dy_messages：会话 id（0:1:a:b）或昵称片段都行
+{ "to": "某个昵称", "content": "..." }            // dy_dm：写操作，只在明确要发的时候用
+```
+
+会话列表为空时不会糊一句「没有」，而是把三种常见原因写出来：还没人私信过 / cookie 过期 / 被限流（`409`）。
 
 ## 注意与边界
 

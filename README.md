@@ -189,8 +189,9 @@ group says "nobody @'d you recently" instead of looking like a broken tool.
   mint; in practice publishing goes through the creator web UI
   <https://creator.douyin.com/creator-micro/content/upload> (the CDP helpers live in `vendor/douyin-tools/`).
   Two gotchas: ① the top of the page only has the tabs (video / image / panorama / article) and
-  "上传视频"/"上传图文" buttons — the **"发布" button only appears after the material has actually been uploaded**,
-  so looking for it before choosing files finds nothing; ② the drop zones are plain `input[type=file]` elements
+  "上传视频"/"上传图文" buttons — **before any material is uploaded there simply is no "发布" button in the DOM**
+  (verified: it is absent from `querySelectorAll('button')`), so looking for it first finds nothing; ② the drop
+  zones are plain `input[type=file]` elements
   (`accept=video/*` for video, `accept=image/...` for images), so `DOM.setFileInputFiles` is far more reliable
   than synthesising clicks.
 - **`check_login_status` lies.** Judge login state by `get_my_profile` returning `status_code === 0`
@@ -362,7 +363,8 @@ dsh plugin --profile <你的 profile> add github:WU079/dsh-douyin-subagent
 - **发布**：MCP 的发布工具需要 TICKET/TS_SIGN/PRIVATE_KEY 这类材料，多数账号拿不到；实际发布走创作者中心网页
   <https://creator.douyin.com/creator-micro/content/upload>，`vendor/douyin-tools/` 里有配套的 CDP 脚本。
   两个容易踩的点：① 页面顶部只有「发布视频 / 发布图文 / 发布全景视频 / 发布文章」四个 tab 和「上传视频 / 上传图文」
-  按钮，**「发布」按钮要等素材真的上传完才会出现**，选文件之前去找它当然找不到；② 素材框是
+  按钮，**素材上传之前整页根本没有「发布」按钮**（实测 `querySelectorAll('button')` 里就没有它，只有最外层导航里的
+  「作品发布」），选文件之前去找它当然找不到；② 素材框是
   `input[type=file]`（视频框 `accept=video/*`、图文框 `accept=image/...`），用 DOM 的
   `setFileInputFiles` 塞文件比模拟点击可靠。
 

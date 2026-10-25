@@ -33,6 +33,7 @@ import { WINDOWS, dayKey, inValley, inWindow, readJson, stateDirOf, writeJson } 
 import { ensureBrowser, ensureMcpServer, exportCookies, mcpUrlOf } from './lib/douyin.mjs'
 import { TESTED_MCP, normalizePolicy, verifyMcp } from './lib/mcpVersion.mjs'
 import { listInbox, readMessages, selfIdentity, sendDm } from './lib/dm.mjs'
+import { listNotices, noticeLine } from './lib/notices.mjs'
 
 export const name = 'douyin-scroll'
 export const inject = ['webServer', 'tools', 'subagents', 'agents']
@@ -475,6 +476,32 @@ export function apply(ctx, rawConfig) {
       const images = Array.isArray(args?.images) ? args.images.filter(Boolean).map(String) : []
       if (!images.length) return { ok: false, error: '缺少 images' }
       return { ok: true, result: await callTool('publish_content', { ...base, images }) }
+    },
+  })
+
+  /* ─────────────── 通知（评论 / @ / 点赞 / 粉丝 / 弹幕） ───────────────
+   * 网页端「消息」里才有收件箱，很多号根本没有；这里直接读通知接口，
+   * 拍平之后 @、评论都看得到，comment_id 还能直接当 dy_comment 的 reply_id 回楼中楼。
+   */
+  tool({
+    name: 'dy_notices',
+    description: '读抖音通知：评论 / @我的 / 点赞 / 新粉丝 / 弹幕。谁在哪个作品下说了什么、什么时候、comment_id 是多少。想看「有没有人 @ 我」「有没有新评论」就用这个 —— 不依赖网页端收件箱。',
+    parameters: {
+      group: { type: 'string', description: 'all（默认，全部）/ comment（评论）/ mention（@我的）/ digg（点赞）/ follow（新粉丝）/ danmaku（弹幕）' },
+      limit: { type: 'number', description: '最多几条（默认 20，上限 100）' },
+      unread_only: { type: 'boolean', description: '只看未读（默认 false）' },
+    },
+    async execute(args) {
+      refresh()
+      const r = await listNotices({
+        callTool,
+        group: args?.group,
+        limit: Number(args?.limit) || 20,
+        unreadOnly: args?.unread_only === true,
+      })
+      const head = r.notices.slice(0, 3).map(noticeLine).join('；')
+      log(`通知（${r.group.label}）：${r.count} 条${r.unread ? `，未读 ${r.unread}` : ''}${head ? `｜${head}` : ''}`)
+      return { ok: true, ...r }
     },
   })
 

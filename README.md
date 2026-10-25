@@ -10,8 +10,8 @@ English | [中文](#中文)
 
 ## What you get
 
-- **14 tools**: `dy_status` / `dy_config` / `dy_login` / `dy_search` / `dy_video` / `dy_comments` /
-  `dy_comment` / `dy_publish` / `dy_inbox` / `dy_messages` / `dy_dm` / `dy_scan` / `dy_tools` / `dy_mcp`
+- **15 tools**: `dy_status` / `dy_config` / `dy_login` / `dy_search` / `dy_video` / `dy_comments` /
+  `dy_comment` / `dy_publish` / `dy_notices` / `dy_inbox` / `dy_messages` / `dy_dm` / `dy_scan` / `dy_tools` / `dy_mcp`
 - **Valley-time timer**: 13:00–15:00 and 19:00–10:00 (next day), weekends count as valley all day.
   At the appointed time it hands a trigger to the target session; the agent then runs `dy_scan` itself.
   `perDay` rounds per day, at least `gapMin` minutes apart.
@@ -159,11 +159,40 @@ MCP is awkward here — all three symptoms verified against `v0.1.0`:
 An empty inbox is reported with the three likely reasons (nobody has messaged yet / stale cookie /
 rate limit `409`) instead of a silent "nothing here".
 
+## Notifications & @ mentions (0.2.4+)
+
+Plenty of accounts simply have **no inbox** — no "Messages" tab, nowhere for @ or comment reminders to show up.
+The notifications API is still there, so `dy_notices` reads it directly:
+
+| `group` | what you get |
+|---|---|
+| `all` (default) | everything |
+| `comment` | comments on your works |
+| `mention` | @ mentions |
+| `digg` | likes |
+| `follow` | new followers |
+| `danmaku` | danmaku |
+
+Every item is flattened to *who / what / when / which work / `comment_id`*, and `comment_id` can be fed straight
+back into `dy_comment.reply_id` to answer in the thread. An empty result is stated as such — an empty `mention`
+group says "nobody @'d you recently" instead of looking like a broken tool.
+
+```jsonc
+{ "group": "comment", "limit": 20 }           // dy_notices: new comments
+{ "group": "mention", "unread_only": true }   // did anyone @ me?
+```
+
 ## Notes & boundaries
 
 - **The MCP server is local-only.** The plugin spawns it with a random per-install bearer token bound to `127.0.0.1`.
 - **Publishing** through the MCP tools needs extra TICKET/TS_SIGN/PRIVATE_KEY material that most accounts cannot
-  mint; in practice publishing goes through the creator web UI. `vendor/douyin-tools/` has the CDP helpers for that.
+  mint; in practice publishing goes through the creator web UI
+  <https://creator.douyin.com/creator-micro/content/upload> (the CDP helpers live in `vendor/douyin-tools/`).
+  Two gotchas: ① the top of the page only has the tabs (video / image / panorama / article) and
+  "上传视频"/"上传图文" buttons — the **"发布" button only appears after the material has actually been uploaded**,
+  so looking for it before choosing files finds nothing; ② the drop zones are plain `input[type=file]` elements
+  (`accept=video/*` for video, `accept=image/...` for images), so `DOM.setFileInputFiles` is far more reliable
+  than synthesising clicks.
 - **`check_login_status` lies.** Judge login state by `get_my_profile` returning `status_code === 0`
   (`dy_status` does this for you).
 - **Cookies expire**; refresh with `dy_login { action: "save" }` while the controlled browser is still logged in.
@@ -185,8 +214,8 @@ MIT — see [LICENSE](LICENSE).
 
 ## 有什么
 
-- **14 个工具**：`dy_status` / `dy_config` / `dy_login` / `dy_search` / `dy_video` / `dy_comments` /
-  `dy_comment` / `dy_publish` / `dy_inbox` / `dy_messages` / `dy_dm` / `dy_scan` / `dy_tools` / `dy_mcp`
+- **15 个工具**：`dy_status` / `dy_config` / `dy_login` / `dy_search` / `dy_video` / `dy_comments` /
+  `dy_comment` / `dy_publish` / `dy_notices` / `dy_inbox` / `dy_messages` / `dy_dm` / `dy_scan` / `dy_tools` / `dy_mcp`
 - **谷时定时器**：中午 13:00–15:00、夜里 19:00–次日 10:00，周末整天算谷时；到点往目标会话递一句话，
   agent 自己用 `dy_scan` 刷。每天 `perDay` 轮，两轮至少隔 `gapMin` 分钟。
 - **值班章程**：`prompts/duty.md`（家里 `$DSH_HOME/douyin-duty/duty.md` 优先，可自己改）。
@@ -304,11 +333,39 @@ dsh plugin --profile <你的 profile> add github:WU079/dsh-douyin-subagent
 
 会话列表为空时不会糊一句「没有」，而是把三种常见原因写出来：还没人私信过 / cookie 过期 / 被限流（`409`）。
 
+## 通知 / @（0.2.4 起）
+
+很多号压根**没有收件箱** —— 网页版没有「消息」tab，@ 和评论提醒没地方露头。但通知接口是在的，
+`dy_notices` 直接读：
+
+| `group` | 读到什么 |
+|---|---|
+| `all`（默认） | 全部 |
+| `comment` | 作品下的新评论 |
+| `mention` | @我的 |
+| `digg` | 点赞 |
+| `follow` | 新粉丝 |
+| `danmaku` | 弹幕 |
+
+每条都拍平成「谁 / 说了什么 / 什么时候 / 哪个作品 / `comment_id`」，`comment_id` 可以直接当
+`dy_comment` 的 `reply_id` 用来回楼中楼。空结果会明说 —— `mention` 空的时候直接告诉你「最近没人 @ 你」，
+不会看着像个坏掉的工具。
+
+```jsonc
+{ "group": "comment", "limit": 20 }           // dy_notices：有没有新评论
+{ "group": "mention", "unread_only": true }   // 有没有人 @ 我
+```
+
 ## 注意与边界
 
 - **MCP 只监听本机**：插件启动它时用每次安装随机生成的 Bearer token，绑在 `127.0.0.1`。
-- **发布**：MCP 的发布工具需要 TICKET/TS_SIGN/PRIVATE_KEY 这类材料，多数账号拿不到；实际发布走创作者中心网页，
-  `vendor/douyin-tools/` 里有配套的 CDP 脚本。
+- **发布**：MCP 的发布工具需要 TICKET/TS_SIGN/PRIVATE_KEY 这类材料，多数账号拿不到；实际发布走创作者中心网页
+  <https://creator.douyin.com/creator-micro/content/upload>，`vendor/douyin-tools/` 里有配套的 CDP 脚本。
+  两个容易踩的点：① 页面顶部只有「发布视频 / 发布图文 / 发布全景视频 / 发布文章」四个 tab 和「上传视频 / 上传图文」
+  按钮，**「发布」按钮要等素材真的上传完才会出现**，选文件之前去找它当然找不到；② 素材框是
+  `input[type=file]`（视频框 `accept=video/*`、图文框 `accept=image/...`），用 DOM 的
+  `setFileInputFiles` 塞文件比模拟点击可靠。
+
 - **`check_login_status` 会误报**：判断登录看 `get_my_profile` 的 `status_code === 0`（`dy_status` 已经替你处理）。
 - **cookie 会过期**：受控浏览器还登着的时候，`dy_login { action: "save" }` 重新导一次。
 - **新号风控严**：评论、发布小量、隔开。

@@ -1,6 +1,6 @@
 {
   "name": "dsh-douyin-subagent",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Douyin scroller for DSH: a valley-time subagent that browses Douyin, reads comments and reports back — plus dy_* tools and a valley-time timer.",
   "keywords": [
     "dsh",

@@ -24,9 +24,55 @@ English | [中文](#中文)
 | piece | what |
 |---|---|
 | DSH | a profile that can install plugins (this is a bundle plugin, `dsh.bundle` declared) |
-| `douyin-mcp-windows-amd64.exe` | prebuilt binary from [yunsur/douyin-mcp releases](https://github.com/yunsur/douyin-mcp/releases). The plugin spawns it on `:18080`; you point `mcpExe` at it |
+| `douyin-mcp-windows-amd64.exe` | prebuilt binary from [yunsur/douyin-mcp releases](https://github.com/yunsur/douyin-mcp/releases) — **pinned to `v0.1.0`**, see [Version pinning](#version-pinning). The plugin spawns it on `:18080`; you point `mcpExe` at it |
 | a Chromium-based browser (Edge/Chrome) | only for login + publishing; the plugin drives it over CDP on port 9222 with a dedicated `--user-data-dir` |
 | a Douyin account | log in once through the browser, export cookies, done |
+
+## Version pinning
+
+The plugin treats `douyin-mcp` as an **external binary**, so an upstream change would otherwise break it
+silently — with an error that looks like anything but "wrong version". It is therefore pinned to the exact
+build that has been tested:
+
+| item | value |
+|---|---|
+| release | [`yunsur/douyin-mcp` `v0.1.0`](https://github.com/yunsur/douyin-mcp/releases/tag/v0.1.0) (2026-10-07) |
+| asset | `douyin-mcp-windows-amd64.exe` |
+| size | `38575616` bytes |
+| SHA-256 | `0795584ff1343ff3d6c963a23ec2098b96cc9cea7bfd73eac4c33149b9963134` |
+| download | <https://github.com/yunsur/douyin-mcp/releases/download/v0.1.0/douyin-mcp-windows-amd64.exe> |
+
+Before spawning the server (and again after `initialize`, where `serverInfo` is available) the plugin hashes
+the binary and compares it with this table. A mismatch is **reported, not swallowed** — `dy_*` tools return:
+
+```
+douyin-mcp 不是测试过的那个构建：测试过的是 yunsur/douyin-mcp v0.1.0（douyin-mcp-windows-amd64.exe，
+sha256 0795584ff134…，38575616 字节）；你这个是 sha256 22e3dbef2237…、17156096 字节，
+serverInfo.version=1.0.0（…\douyin-login-windows-amd64.exe）。版本号碰巧一样但二进制不同。
+改法：从 https://github.com/yunsur/douyin-mcp/releases/download/v0.1.0/douyin-mcp-windows-amd64.exe
+下回测试过的那个 exe；或者把 mcpVersionCheck 设成 "warn"（只警告、照常用）/"off"（完全不检查）。
+```
+
+`dy_status` reports the same verdict as `mcp.version`: `{level: ok|warn|error|off, tested, detected, message}`.
+
+Two things worth knowing:
+
+- **`serverInfo.version` is not a release number.** The upstream binary hardcodes `"version": "1.0.0"` in
+  `initialize` regardless of the tag it was built from, so the real lock is the **SHA-256**; the version string
+  is only a secondary signal (a changed `serverInfo` usually means the interface moved too).
+- **Only the Windows asset is hashed.** On other platforms the check falls back to comparing
+  `serverInfo.version` and reports `level: "warn"` ("unverifiable") rather than claiming a match.
+
+Override with `mcpVersionCheck`:
+
+| value | behaviour |
+|---|---|
+| `strict` (default) | different binary ⇒ error; `dy_*` refuse to run |
+| `warn` | different binary ⇒ logged and shown in `dy_status`; tools still run |
+| `off` | no check at all (a mismatch will then fail wherever upstream changed) |
+
+Re-testing a newer upstream release is a deliberate step: bump `TESTED_MCP` in `lib/mcpVersion.mjs`, run a
+`dy_scan` + `dy_comments` round, then update this table.
 
 ## Install
 
@@ -83,6 +129,7 @@ Then restart DSH (or reload the profile) — the `dy_*` tools show up.
 | `mcpExe` | `""` | path to `douyin-mcp-windows-amd64.exe` |
 | `mcpPort` | `18080` | MCP HTTP port |
 | `mcpToken` | generated | bearer token for the local MCP server; random on first run if empty |
+| `mcpVersionCheck` | `strict` | `douyin-mcp` version gate: `strict` / `warn` / `off` (see [Version pinning](#version-pinning)) |
 | `browserPort` | `9222` | CDP port of the controlled browser |
 | `browserProfile` | `<home>/browser` | `--user-data-dir` of that browser |
 | `cookieFile` | `<home>/cookies.txt` | where the exported cookie lives |
@@ -128,9 +175,52 @@ MIT — see [LICENSE](LICENSE).
 | 件 | 说明 |
 |---|---|
 | DSH | 能装插件（本插件声明了 `dsh.bundle`） |
-| `douyin-mcp-windows-amd64.exe` | [yunsur/douyin-mcp releases](https://github.com/yunsur/douyin-mcp/releases) 的预编译版；插件会在 `:18080` 拉起它，路径用 `mcpExe` 配 |
+| `douyin-mcp-windows-amd64.exe` | [yunsur/douyin-mcp releases](https://github.com/yunsur/douyin-mcp/releases) 的预编译版，**锁在 `v0.1.0`**（见下面「版本锁定」）；插件会在 `:18080` 拉起它，路径用 `mcpExe` 配 |
 | Chromium 系浏览器（Edge/Chrome） | 只用来登录和发布；插件用独立的 `--user-data-dir` 通过 CDP 驱动它 |
 | 抖音账号 | 在受控浏览器里扫一次码，导出 cookie 即可 |
+
+## 版本锁定
+
+`douyin-mcp` 是**外部可执行文件**，上游一改接口，这边就会坏 —— 而且报出来的错看着像别的问题。
+所以插件把它锁死在**实际测过的那个构建**上：
+
+| 项 | 值 |
+|---|---|
+| release | [`yunsur/douyin-mcp` `v0.1.0`](https://github.com/yunsur/douyin-mcp/releases/tag/v0.1.0)（2026-10-07） |
+| 资产 | `douyin-mcp-windows-amd64.exe` |
+| 大小 | `38575616` 字节 |
+| SHA-256 | `0795584ff1343ff3d6c963a23ec2098b96cc9cea7bfd73eac4c33149b9963134` |
+| 下载 | <https://github.com/yunsur/douyin-mcp/releases/download/v0.1.0/douyin-mcp-windows-amd64.exe> |
+
+**起了服务之前**先算一遍 exe 的哈希对上表；连上之后**再用 `serverInfo` 复核一遍**。对不上就明确报错
+（`dy_*` 工具直接把这段话抛出来）：
+
+```
+douyin-mcp 不是测试过的那个构建：测试过的是 yunsur/douyin-mcp v0.1.0（douyin-mcp-windows-amd64.exe，
+sha256 0795584ff134…，38575616 字节）；你这个是 sha256 22e3dbef2237…、17156096 字节，
+serverInfo.version=1.0.0（…\douyin-login-windows-amd64.exe）。版本号碰巧一样但二进制不同。
+改法：从 https://github.com/yunsur/douyin-mcp/releases/download/v0.1.0/douyin-mcp-windows-amd64.exe
+下回测试过的那个 exe；或者把 mcpVersionCheck 设成 "warn"（只警告、照常用）/"off"（完全不检查）。
+```
+
+`dy_status` 的 `mcp.version` 里能看到同一份结论：`{level: ok|warn|error|off, tested, detected, message}`。
+
+两个容易踩的点：
+
+- **`serverInfo.version` 不是版本号**：上游二进制在 `initialize` 里把 `"version"` 写死成 `"1.0.0"`，跟它从哪个 tag
+  编出来无关 —— 所以真正的锁是 **SHA-256**，版本号只是辅助信号（接口变了它通常会跟着变）。
+- **只锁 Windows 资产的哈希**。其它平台上退化成只比 `serverInfo.version`，结论给 `level: "warn"`（「没法核实」），
+  不会假装对上。
+
+想放行用 `mcpVersionCheck`：
+
+| 值 | 行为 |
+|---|---|
+| `strict`（默认） | 二进制对不上就报错，`dy_*` 不干活 |
+| `warn` | 对不上只记日志 + 在 `dy_status` 里显示，工具照常用 |
+| `off` | 完全不检查（那就只能等上游改动时自己面对报错） |
+
+真要升级到新版：改 `lib/mcpVersion.mjs` 里的 `TESTED_MCP`，跑一轮 `dy_scan` + `dy_comments` 验一遍，再更新这张表。
 
 ## 安装
 
@@ -171,6 +261,7 @@ dsh plugin --profile <你的 profile> add github:WU079/dsh-douyin-subagent
 ## 配置
 
 `dy_config` 读写 `$DSH_HOME/douyin-duty/config.json`，字段见上方英文表格（同一张表）。
+其中 `mcpVersionCheck` 管 douyin-mcp 的版本闸（`strict` / `warn` / `off`，默认 `strict`，见「版本锁定」）。
 
 ## 注意与边界
 

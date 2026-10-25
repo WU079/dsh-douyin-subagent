@@ -83,6 +83,22 @@ window.__ModuleLoader__.load({
       onChange: (e) => onChange(Number(e.target.value)),
     })
 
+    /** douyin-mcp 版本闸的结论 → 状态行上的一个 chip（对得上就淡淡一句，不对就显眼） */
+    const mcpVerChip = (s) => {
+      const v = s?.mcp?.version
+      if (!v) return null
+      const tag = v.tested?.tag || ''
+      if (v.level === 'ok') return h('span', { 'data-dy-chip': '' }, 'MCP 版本对得上' + (tag ? '（' + tag + '）' : ''))
+      if (v.level === 'off') return h('span', { 'data-dy-chip': '' }, 'MCP 版本：不检查')
+      const brief = v.level === 'error' ? 'MCP 版本对不上！' : 'MCP 版本存疑'
+      const detail = (v.detected?.version ? ' serverInfo ' + v.detected.version : '') +
+        (v.detected?.sha256 ? ' · sha256 ' + String(v.detected.sha256).slice(0, 12) + '…' : '')
+      return h('span', {
+        'data-dy-chip': '', title: v.message || '',
+        style: { color: v.level === 'error' ? '#f85149' : '#d29922' },
+      }, brief + (v.level === 'error' ? '（点 dy_status 看详情）' : detail))
+    }
+
     function Panel() {
       const [cfg, setCfg] = useState(null)
       const [status, setStatus] = useState(null)
@@ -187,6 +203,7 @@ window.__ModuleLoader__.load({
           h('div', { 'data-dy-row': '', 'data-wrap': true },
             h('span', { 'data-dy-chip': '' }, '今天第 ' + (today.rounds ?? 0) + ' / ' + (today.perDay ?? cfg.perDay) + ' 轮'),
             h('span', { 'data-dy-chip': '' }, 'MCP ' + (status?.mcp?.ok ? '在线' : '没起') + ' :' + cfg.mcpPort),
+            mcpVerChip(status),
             h('span', { 'data-dy-chip': '' }, status?.loggedIn ? '登录态在' : '还没登录'),
             h('span', { 'data-dy-chip': '' }, '上次刷：' + (status?.lastRunAt ? new Date(status.lastRunAt).toLocaleString() : '还没'))),
           status?.windows ? h('div', { 'data-dy-chips': '' }, Object.entries(status.windows).map(([k, w]) =>

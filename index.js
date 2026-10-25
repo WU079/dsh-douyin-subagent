@@ -31,6 +31,7 @@ import { McpHttp } from './lib/mcpHttp.mjs'
 import { publishComment as publishCommentViaPage } from './lib/webComment.mjs'
 import { WINDOWS, dayKey, inValley, inWindow, readJson, stateDirOf, writeJson } from './lib/state.mjs'
 import { ensureBrowser, ensureMcpServer, exportCookies, mcpUrlOf } from './lib/douyin.mjs'
+import { TESTED_MCP, normalizePolicy, verifyMcp } from './lib/mcpVersion.mjs'
 
 export const name = 'douyin-scroll'
 export const inject = ['webServer', 'tools', 'subagents', 'agents']
@@ -51,6 +52,7 @@ const DEFAULTS = {
   mcpExe: '',                    // 指向 douyin-mcp-windows-amd64.exe；也可用 DOUYIN_MCP_EXE
   mcpPort: 18080,
   mcpToken: '',                  // 留空 = 首次运行随机生成并存进家目录 config.json
+  mcpVersionCheck: 'strict',     // douyin-mcp 版本闸：strict = 不是测试过的构建就报错 / warn = 只警告 / off = 不检查
   browserPort: 9222,
   cdpPort: 9333,                  // 已登录 douyin.com 的浏览器 CDP 端口（评论走签名直发时用）
   browserProfile: '',            // 留空 = <家目录>/browser
@@ -75,6 +77,7 @@ export const Config = !z ? undefined : z.object({
   mcpExe: z.string().default(DEFAULTS.mcpExe).extra('volatile', true),
   mcpPort: z.natural().default(18080).extra('volatile', true),
   mcpToken: z.string().default('').extra('volatile', true),
+  mcpVersionCheck: z.string().default('strict').extra('volatile', true),
   browserPort: z.natural().default(9222).extra('volatile', true),
   cdpPort: z.natural().default(9333).extra('volatile', true),
   browserProfile: z.string().default(DEFAULTS.browserProfile).extra('volatile', true),
@@ -144,15 +147,44 @@ export function apply(ctx, rawConfig) {
     mcp.sessionId = null
     mcp.inited = false
   }
+  /** 版本闸结论 → 给工具/设置页看的小对象（别把整个 TESTED 结构塞进返回，够用就行） */
+  const versionView = (v) => (v ? {
+    policy: v.policy,
+    level: v.level,
+    ok: v.ok,
+    tested: {
+      repo: TESTED_MCP.repo, tag: TESTED_MCP.tag, releasedAt: TESTED_MCP.releasedAt,
+      asset: TESTED_MCP.asset, sha256: TESTED_MCP.sha256, url: TESTED_MCP.url,
+    },
+    detected: {
+      version: v.detected?.serverVersion ?? null,
+      sha256: v.detected?.sha256 ?? null,
+      size: v.detected?.size ?? null,
+    },
+    message: v.message,
+  } : null)
+  /** 上一次版本闸的结论（dy_status / 设置页直接用） */
+  let lastMcpCheck = null
   const ensureServer = async () => {
     if (!cfg.enabled) return { ok: false, error: '插件已关闭（config.enabled=false）' }
     syncMcp()
+    const policy = normalizePolicy(cfg.mcpVersionCheck)
+    // ① 起服务之前先查 exe 是不是测试过的那个构建 —— 不对就别白等它启动 25 秒
+    if (runtime.exe && existsSync(runtime.exe)) {
+      const pre = await verifyMcp({ exe: runtime.exe, policy, log })
+      lastMcpCheck = pre
+      if (!pre.ok) return { ok: false, error: pre.message, version: versionView(pre) }
+    }
     const r = await ensureMcpServer({
       exe: runtime.exe, port: cfg.mcpPort, token: runtime.token, stateDir, cookieFile, log,
     })
-    if (!r.ok) return r
-    try { await mcp.initialize() } catch (e) { return { ...r, ok: false, error: String(e?.message ?? e) } }
-    return r
+    if (!r.ok) return { ...r, version: versionView(lastMcpCheck) }
+    try { await mcp.initialize() } catch (e) { return { ...r, ok: false, error: String(e?.message ?? e), version: versionView(lastMcpCheck) } }
+    // ② 连上之后再拿 serverInfo 复核一遍（上游 serverInfo.version 是写死的 1.0.0，只当辅助信号）
+    const post = await verifyMcp({ exe: runtime.exe, serverInfo: mcp.serverInfo, policy, log })
+    lastMcpCheck = post
+    if (!post.ok) return { ...r, ok: false, error: post.message, version: versionView(post) }
+    return { ...r, version: versionView(post) }
   }
   const callTool = async (name, args) => {
     const s = await ensureServer()
@@ -228,7 +260,7 @@ export function apply(ctx, rawConfig) {
 
   tool({
     name: 'dy_status',
-    description: '看抖音插件现在的状态：MCP 服务在不在、登录的是谁、今天的自动轮次、谷时窗口与下次可跑时间、最近一份报告。',
+    description: '看抖音插件现在的状态：MCP 服务在不在、douyin-mcp 版本对不对、登录的是谁、今天的自动轮次、谷时窗口与下次可跑时间、最近一份报告。',
     parameters: {},
     async execute() {
       refresh(); dayOf()
@@ -243,7 +275,7 @@ export function apply(ctx, rawConfig) {
       return {
         ok: true,
         plugin: { version: (() => { try { return JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8')).version } catch { return '' } })(), stateDir },
-        mcp: { ...server, url: mcp.url },
+        mcp: { ...server, url: mcp.url, serverInfo: mcp.serverInfo, versionCheck: cfg.mcpVersionCheck },
         loggedIn: Boolean(existsSync(cookieFile)),
         profile: profile && profile.status_code === 0
           ? {
@@ -264,7 +296,7 @@ export function apply(ctx, rawConfig) {
 
   tool({
     name: 'dy_config',
-    description: '读 / 改抖音插件的配置（写进家目录的 config.json）。不给 patch 就是读。可改：perDay、gapMin、autoMode(manual/valley/always)、noon、night、direction、keywords、perScan、ownerName、targetSession、mcpExe、mcpPort、mcpToken、browserPort、cookieFile。',
+    description: '读 / 改抖音插件的配置（写进家目录的 config.json）。不给 patch 就是读。可改：perDay、gapMin、autoMode(manual/valley/always)、noon、night、direction、keywords、perScan、ownerName、targetSession、mcpExe、mcpPort、mcpToken、mcpVersionCheck(strict/warn/off)、browserPort、cookieFile。',
     parameters: {
       patch: { type: 'object', description: '要改的字段（可省）', additionalProperties: true },
     },
@@ -577,7 +609,8 @@ export function apply(ctx, rawConfig) {
 
   const SETTING_KEYS = [
     'enabled', 'autoMode', 'noon', 'night', 'perDay', 'gapMin', 'direction', 'keywords',
-    'perScan', 'ownerName', 'targetSession', 'reportLevel', 'cookieFile', 'browserPort', 'cdpPort', 'mcpPort', 'mcpExe',
+    'perScan', 'ownerName', 'targetSession', 'reportLevel', 'cookieFile', 'browserPort', 'cdpPort',
+    'mcpPort', 'mcpExe', 'mcpVersionCheck',
   ]
   const clampInt = (v, lo, hi, dft) => {
     const n = Math.round(Number(v))
@@ -598,6 +631,7 @@ export function apply(ctx, rawConfig) {
       else if (k === 'browserPort') out[k] = clampInt(v, 1, 65535, DEFAULTS.browserPort)
       else if (k === 'autoMode') out[k] = ['manual', 'valley', 'always'].includes(String(v)) ? String(v) : 'valley'
       else if (k === 'reportLevel') out[k] = ['full', 'brief', 'off'].includes(String(v)) ? String(v) : 'full'
+      else if (k === 'mcpVersionCheck') out[k] = normalizePolicy(v)
       else if (k === 'keywords') {
         const arr = Array.isArray(v) ? v : String(v ?? '').split(/[,，、\s]+/)
         out[k] = arr.map((x) => String(x).trim()).filter(Boolean).slice(0, 20)
@@ -635,6 +669,8 @@ export function apply(ctx, rawConfig) {
       autoMode: cfg.autoMode,
       mcpPort: cfg.mcpPort,
       mcp: server,
+      mcpServerInfo: mcp.serverInfo,
+      mcpVersionCheck: cfg.mcpVersionCheck,
       loggedIn: existsSync(cookieFile),
       today: { day: cur.day || dayKey(now()), rounds: cur.count || 0, perDay: cfg.perDay, windows: cur.windows || {} },
       windows: Object.fromEntries(openWindows().map(([k, w]) => [k, { label: w.label, start: w.start, end: w.end, open: inWindow(now(), w) }])),

@@ -464,18 +464,21 @@ export function apply(ctx, rawConfig) {
       const kind = String(args?.kind || 'image').trim()
       const title = String(args?.title || '').trim()
       if (!title) return { ok: false, error: '缺少 title' }
-      const base = {
-        title, desc: title,
-        ...(Array.isArray(args?.tags) && args.tags.length ? { tags: args.tags } : {}),
-        ...(args?.visibility ? { visibility: args.visibility } : {}),
-      }
+      // MCP 的 publish_content 只认 content（多塞 desc/title 会被 schema 打回），
+      // 所以图文把标题和话题拼成正文；视频按 publish_with_video 的字段来。
+      const tags = Array.isArray(args?.tags)
+        ? args.tags.filter(Boolean).map((t) => String(t).trim()).filter(Boolean)
+        : []
+      const tagLine = tags.length ? tags.map((t) => (t.startsWith('#') ? t : `#${t}`)).join(' ') : ''
+      const vis = args?.visibility ? { visibility: args.visibility } : {}
       if (kind === 'video') {
         if (!args?.video) return { ok: false, error: '缺少 video 路径' }
-        return { ok: true, result: await callTool('publish_with_video', { ...base, video: String(args.video) }) }
+        return { ok: true, result: await callTool('publish_with_video', { title, desc: title, video: String(args.video), ...(tags.length ? { tags } : {}), ...vis }) }
       }
       const images = Array.isArray(args?.images) ? args.images.filter(Boolean).map(String) : []
       if (!images.length) return { ok: false, error: '缺少 images' }
-      return { ok: true, result: await callTool('publish_content', { ...base, images }) }
+      const content = tagLine ? `${title}\n${tagLine}` : title
+      return { ok: true, result: await callTool('publish_content', { content, images, ...vis }) }
     },
   })
 

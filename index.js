@@ -412,7 +412,25 @@ export function apply(ctx, rawConfig) {
     async execute(args) {
       const id = String(args?.aweme_id || '').trim()
       if (!id) return { ok: false, error: '缺少 aweme_id' }
-      return { ok: true, result: await callTool('get_video_comments', { aweme_id: id, count: Math.max(1, Number(args?.count) || 30) }) }
+      // 底层 MCP 的 get_video_comments 要 video + 字符串 count，和插件一层 number 打架；
+      // 改用 get_all_video_comments（video/limit/include_replies，已知可用），再只留有用字段。
+      const limit = Math.max(1, Math.min(Number(args?.count) || 30, 100))
+      const raw = await callTool('get_all_video_comments', { video: id, limit, include_replies: true })
+      const list = Array.isArray(raw) ? raw : (raw?.comments || raw?.data || raw?.result || [])
+      const rows = (Array.isArray(list) ? list : []).map((c) => ({
+        cid: c?.cid,
+        text: c?.text,
+        user: c?.user?.nickname,
+        uid: c?.user?.uid,
+        ip: c?.ip_label,
+        time: c?.create_time,
+        digg: c?.digg_count,
+        replies: Array.isArray(c?.reply_comment)
+          ? c.reply_comment.map((r) => ({ cid: r?.cid, user: r?.user?.nickname, text: r?.text, isAuthor: r?.label_text === '作者' }))
+          : [],
+        replyTotal: c?.reply_comment_total,
+      }))
+      return { ok: true, aweme_id: id, count: rows.length, comments: rows.slice(0, limit) }
     },
   })
 

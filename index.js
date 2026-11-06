@@ -398,7 +398,7 @@ export function apply(ctx, rawConfig) {
     async execute(args) {
       const id = String(args?.aweme_id || '').trim()
       if (!id) return { ok: false, error: '缺少 aweme_id' }
-      return { ok: true, result: await callTool('get_video_detail', { aweme_id: id }) }
+      return { ok: true, result: await callTool('get_video_detail', { video: id }) }
     },
   })
 

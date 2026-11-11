@@ -199,6 +199,31 @@ export function apply(ctx, rawConfig) {
     return mcp.call(name, args || {})
   }
 
+  /** 跑网页 UI 脚本（authd 真实登录浏览器的 CDP），返回脚本打印的 JSON。
+   *  为什么需要：yunsur 的评论接口在部分账号上直接 status_code 8，签名补不齐；真实浏览器 UI 能绕过去。 */
+  const DOUYIN_PUB_DIR = process.env.DOUYIN_PUB_DIR || 'F:/大肥鱼/douyin/pub'
+  const runUiScript = (script, args = []) => new Promise((resolve) => {
+    const child = spawn(process.execPath, [join(DOUYIN_PUB_DIR, script), ...args], {
+      cwd: DOUYIN_PUB_DIR,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', AUTHD_CDP: `http://127.0.0.1:${Number(cfg.cdpPort) || 9333}` },
+      windowsHide: true,
+    })
+    let out = ''
+    let err = ''
+    child.stdout.on('data', (d) => { out += d })
+    child.stderr.on('data', (d) => { err += d })
+    const timer = setTimeout(() => { try { child.kill() } catch { /* ignore */ } }, 180000)
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      let parsed = null
+      const text = out.trim()
+      const at = text.indexOf('{')
+      if (at >= 0) { try { parsed = JSON.parse(text.slice(at)) } catch { /* ignore */ } }
+      resolve({ ok: code === 0 && parsed?.ok === true, code, parsed, stdout: text.slice(-1200), stderr: err.slice(-600) })
+    })
+    child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, error: String(e?.message ?? e) }) })
+  })
+
   const now = () => new Date()
   const st = () => readJson(stateFile, {})
   const bumpState = (patch) => { const cur = st(); writeJson(stateFile, { ...cur, ...patch }); return { ...cur, ...patch } }
@@ -473,11 +498,35 @@ export function apply(ctx, rawConfig) {
       } catch (e) {
         log(`页面签名直发失败，改试 MCP：${e?.message || e}`)
       }
-      const r = await callTool('post_video_comment', {
-        aweme_id: id, content, ...(args?.reply_id ? { reply_id: String(args.reply_id) } : {}),
-      })
-      log(`已发评论（aweme=${id} via MCP）`)
-      return { ok: true, via: 'mcp', result: r }
+      let mcpErr = null
+      try {
+        const r = await callTool('post_video_comment', {
+          aweme_id: id, content, ...(args?.reply_id ? { reply_id: String(args.reply_id) } : {}),
+        })
+        log(`已发评论（aweme=${id} via MCP）`)
+        return { ok: true, via: 'mcp', result: r }
+      } catch (e) {
+        mcpErr = e
+        log(`MCP 发评论失败，改试浏览器 UI：${e?.message || e}`)
+      }
+      // 最后兜底：真实登录浏览器的网页 UI（yunsur 评论接口在风控/缺 ticket 时会 status_code 8）
+      let replyName = ''
+      if (args?.reply_id) {
+        try {
+          const rawList = await callTool('get_all_video_comments', { video: id, limit: 100, include_replies: true })
+          const list = Array.isArray(rawList) ? rawList : (rawList?.comments || rawList?.data || rawList?.result || [])
+          const hit = list.find((c) => String(c?.cid) === String(args.reply_id))
+          replyName = hit?.user?.nickname || ''
+        } catch { /* 查不到昵称就发顶层评论 */ }
+      }
+      const ui = await runUiScript('dy-comment-ui.mjs', [
+        '--aweme', id, '--text', content, ...(replyName ? ['--reply-name', replyName] : []),
+      ])
+      if (ui.ok) {
+        log(`已发评论（aweme=${id} via 浏览器 UI${replyName ? `，回复 ${replyName}` : ''}）`)
+        return { ok: true, via: 'ui', result: ui.parsed }
+      }
+      return { ok: false, error: `页面签名/MCP/浏览器 UI 三条路都没发出去：${ui.parsed?.error || ui.stderr || ui.error || mcpErr?.message || 'unknown'}` }
     },
   })
 
@@ -505,12 +554,28 @@ export function apply(ctx, rawConfig) {
       const vis = args?.visibility ? { visibility: args.visibility } : {}
       if (kind === 'video') {
         if (!args?.video) return { ok: false, error: '缺少 video 路径' }
-        return { ok: true, result: await callTool('publish_with_video', { title, desc: title, video: String(args.video), ...(tags.length ? { tags } : {}), ...vis }) }
+        try {
+          const r = await callTool('publish_with_video', { title, desc: title, video: String(args.video), ...(tags.length ? { tags } : {}), ...vis })
+          return { ok: true, via: 'mcp', result: r }
+        } catch (e) {
+          log(`MCP 发视频失败，改走浏览器 UI：${e?.message || e}`)
+          const ui = await runUiScript('dy-publish-ui.mjs', ['--video', String(args.video), '--title', title, '--caption', tagLine || title])
+          if (ui.ok) return { ok: true, via: 'ui', result: ui.parsed }
+          return { ok: false, error: `MCP/浏览器 UI 都没发出去：${ui.parsed?.error || ui.stderr || ui.error || e?.message || 'unknown'}` }
+        }
       }
       const images = Array.isArray(args?.images) ? args.images.filter(Boolean).map(String) : []
       if (!images.length) return { ok: false, error: '缺少 images' }
       const content = tagLine ? `${title}\n${tagLine}` : title
-      return { ok: true, result: await callTool('publish_content', { content, images, ...vis }) }
+      try {
+        const r = await callTool('publish_content', { content, images, ...vis })
+        return { ok: true, via: 'mcp', result: r }
+      } catch (e) {
+        log(`MCP 发图文失败，改走浏览器 UI：${e?.message || e}`)
+        const ui = await runUiScript('dy-publish-ui.mjs', ['--images', images.join(','), '--caption', content])
+        if (ui.ok) return { ok: true, via: 'ui', result: ui.parsed }
+        return { ok: false, error: `MCP/浏览器 UI 都没发出去：${ui.parsed?.error || ui.stderr || ui.error || e?.message || 'unknown'}` }
+      }
     },
   })
 

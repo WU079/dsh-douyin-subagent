@@ -418,3 +418,13 @@ MCP 的 `post_video_comment` 要 `ticket/ts_sign`（IM 会话签名），纯 coo
 
 只用最小参数（`device_platform` / `aid` / `aweme_id` / `reply_id` + `X-Bogus`）即可，不需要 msToken、verifyFp 那些模板参数；
 真遇到风控（返回非 200 或需要验证），工具会把响应片段抛出来，这会儿应该停下来人工处理，别硬重试。
+
+**0.2.6 起的三级兜底**：页面签名直发（`via: "page"`）失败后先试 MCP（`via: "mcp"`），还失败就走**真实登录浏览器的 UI**
+（`via: "ui"`，脚本 `dy-comment-ui.mjs`，通过 authd 的 CDP 9333 连上已登录 Edge，模拟点击评论框/回复/发送）。
+前提是本机常驻的 authd（`F:/大肥鱼/douyin/pub/authd.mjs`）带 `--remote-debugging-port=9333` 起了 Edge——
+authd 现已默认开这个端口（`AUTHD_CDP_PORT` 可改）。实测：真发一条回复成功落到楼中楼（cid `7706878325402387250`），
+页面签名直发在 authd 有 CDP 之后也恢复可用（之前 `status_code 8` 有一部分是当时没有可用的页面上下文）。
+
+**发布（0.2.6 起）**：`dy_publish` 同样先走 MCP，失败后自动退到 UI 脚本 `dy-publish-ui.mjs`
+（`--video` 或 `--images` + 标题/文案，--dry 可只上传不发布）。脚本目录默认 `F:/大肥鱼/douyin/pub`，
+可用环境变量 `DOUYIN_PUB_DIR` 覆盖。

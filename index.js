@@ -50,6 +50,9 @@ const DEFAULTS = {
   keywords: [],                  // 方向候选，逗号串也可
   perScan: 1,                    // 每轮挑几条
   ownerName: '主人',
+  // 互动：扫描之外的动作（默认只侦察；开了才让子代理发 1 条评论 / 主会话发作品）
+  autoComment: false,            // true = 允许子代理在轮次里发 1 条评论；false = 只侦察（评论被风控挡时保持 false）
+  autoPublish: false,            // true = 允许主会话在轮次里发布作品（发布仍走网页 CDP）
   // 服务（留空 = 用环境变量 / 插件家目录下的默认位置）
   mcpExe: '',                    // 指向 douyin-mcp-windows-amd64.exe；也可用 DOUYIN_MCP_EXE
   mcpPort: 18080,
@@ -61,7 +64,7 @@ const DEFAULTS = {
   cookieFile: '',                // 留空 = <家目录>/cookies.txt
   // 投递
   targetSession: '',             // 留空 = 自动挑最近聊过的会话
-  triggerPrompt: '（到谷时啦，去抖音帮我刷一轮吧～方向：{direction}。用 dy_scan 就行；刷完按设置该评论就评论、该发作品就发作品。）',
+  triggerPrompt: '（到谷时啦，去抖音帮我刷一轮吧～方向：{direction}。用 dy_scan 就行；{interact}）',
   reportLevel: 'full',           // full / brief / off
 }
 
@@ -76,6 +79,8 @@ export const Config = !z ? undefined : z.object({
   keywords: z.array(z.string()).default([]).extra('volatile', true),
   perScan: z.natural().default(1).extra('volatile', true),
   ownerName: z.string().default('主人').extra('volatile', true),
+  autoComment: z.boolean().default(false).extra('volatile', true),
+  autoPublish: z.boolean().default(false).extra('volatile', true),
   mcpExe: z.string().default(DEFAULTS.mcpExe).extra('volatile', true),
   mcpPort: z.natural().default(18080).extra('volatile', true),
   mcpToken: z.string().default('').extra('volatile', true),
@@ -226,9 +231,18 @@ export function apply(ctx, rawConfig) {
     const agent = pickAgent(String(cfg.targetSession || '').trim())
     if (!agent) { log(`自动刷：找不到可用会话（${why}）`); return false }
     if (typeof agent.followup !== 'function') { log('自动刷：目标 agent 没有 followup'); return false }
-    const text = String(cfg.triggerPrompt || DEFAULTS.triggerPrompt)
+    const acts = []
+    if (cfg.autoComment !== false) acts.push('评论 1 条')
+    if (cfg.autoPublish === true) acts.push('发作品 1 条')
+    const interact = acts.length
+      ? `刷完按设置可以${acts.join('、')}——值得才动，不硬凑。`
+      : '这一轮只侦察：不评论、不点赞、不发布。'
+    const template = String(cfg.triggerPrompt || DEFAULTS.triggerPrompt)
+    let text = template
       .split('{direction}').join(dir)
       .split('{owner}').join(String(cfg.ownerName || '主人'))
+      .split('{interact}').join(interact)
+    if (!template.includes('{interact}')) text += interact
     try {
       await agent.followup({
         id: randomUUID(),
@@ -298,7 +312,7 @@ export function apply(ctx, rawConfig) {
 
   tool({
     name: 'dy_config',
-    description: '读 / 改抖音插件的配置（写进家目录的 config.json）。不给 patch 就是读。可改：perDay、gapMin、autoMode(manual/valley/always)、noon、night、direction、keywords、perScan、ownerName、targetSession、mcpExe、mcpPort、mcpToken、mcpVersionCheck(strict/warn/off)、browserPort、cookieFile。',
+    description: '读 / 改抖音插件的配置（写进家目录的 config.json）。不给 patch 就是读。可改：perDay、gapMin、autoMode(manual/valley/always)、noon、night、direction、keywords、perScan、ownerName、autoComment(是否允许发评论)、autoPublish(是否允许发作品)、targetSession、mcpExe、mcpPort、mcpToken、mcpVersionCheck(strict/warn/off)、browserPort、cookieFile。',
     parameters: {
       patch: { type: 'object', description: '要改的字段（可省）', additionalProperties: true },
     },
@@ -614,6 +628,9 @@ export function apply(ctx, rawConfig) {
       .split('{owner}').join(String(cfg.ownerName || '主人'))
       .split('{n}').join(String(perScan))
       + (cfg.reportLevel === 'brief' ? '\n\n⚠️ 报告形态：**薄** —— 每条一两行就够。' : '')
+      + (cfg.autoComment === false
+        ? '\n\n⚠️ 本轮只做侦察：不要评论、点赞、收藏、发布。'
+        : '\n\n⚠️ 本轮允许互动：定稿后可以给最值得的那条用 `dy_comment` 发 1 条短评论（值得才发，别硬凑；回别人先查重；新号风控严，最多 1 条）。不要点赞/收藏/发布。')
     let run
     try {
       run = await ctx.subagents.startActivation({

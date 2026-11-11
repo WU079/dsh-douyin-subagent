@@ -126,6 +126,8 @@ Then restart DSH (or reload the profile) — the `dy_*` tools show up.
 | `direction` | `""` | what to look for |
 | `keywords` | `[]` | fallback directions |
 | `perScan` | `1` | how many items each round |
+| `autoComment` | `false` | allow the round to post **one** comment after scanning; off by default because comments are currently risk-control blocked (see Notes) |
+| `autoPublish` | `false` | allow the round to publish **one** work (still through the creator web page) |
 | `mcpExe` | `""` | path to `douyin-mcp-windows-amd64.exe` |
 | `mcpPort` | `18080` | MCP HTTP port |
 | `mcpToken` | generated | bearer token for the local MCP server; random on first run if empty |
@@ -134,7 +136,7 @@ Then restart DSH (or reload the profile) — the `dy_*` tools show up.
 | `browserProfile` | `<home>/browser` | `--user-data-dir` of that browser |
 | `cookieFile` | `<home>/cookies.txt` | where the exported cookie lives |
 | `targetSession` | `""` | session to deliver the trigger to; empty = most recent |
-| `triggerPrompt` | built-in | text handed to the session |
+| `triggerPrompt` | built-in | text handed to the session; supports `{direction}` / `{owner}` / `{interact}` (the last one is filled from `autoComment` / `autoPublish`) |
 | `reportLevel` | `full` | `full` / `brief` / `off` |
 
 ## Direct messages
@@ -198,6 +200,10 @@ group says "nobody @'d you recently" instead of looking like a broken tool.
   (`dy_status` does this for you).
 - **Cookies expire**; refresh with `dy_login { action: "save" }` while the controlled browser is still logged in.
 - **Young accounts are rate-limited.** Comment/publish in small amounts and spaced out.
+- **Comments can be refused by risk control.** A `dy_comment` result of `{"comment": null, "status_code": 8}`
+  is the platform declining the write, not a signature bug: verified 2026-11-11 through the page-sign route,
+  the `dy3.mjs` helper **and** a reply on our own video — all returned the same code, while `get_my_profile`
+  showed no ban flags. Try once, then check the account in the app; do not retry in a loop.
 - Nothing here is affiliated with Douyin/ByteDance. Use it for personal browsing; respect their terms and other
   people's privacy. Read other people's comments, don't mass-harvest them.
 
@@ -314,6 +320,8 @@ dsh plugin --profile <你的 profile> add github:WU079/dsh-douyin-subagent
 
 `dy_config` 读写 `$DSH_HOME/douyin-duty/config.json`，字段见上方英文表格（同一张表）。
 其中 `mcpVersionCheck` 管 douyin-mcp 的版本闸（`strict` / `warn` / `off`，默认 `strict`，见「版本锁定」）。
+`autoComment`（默认 `false`，谷时轮次允许子代理发 1 条评论；评论被风控挡着时保持关着）和 `autoPublish`（默认 `false`，允许主会话在轮次里
+发作品）控制「扫描之外还动不动手」；`triggerPrompt` 支持 `{direction}` / `{owner}` / `{interact}` 三个占位符。
 
 ## 私信（0.2.3 起）
 
@@ -371,6 +379,9 @@ dsh plugin --profile <你的 profile> add github:WU079/dsh-douyin-subagent
 - **`check_login_status` 会误报**：判断登录看 `get_my_profile` 的 `status_code === 0`（`dy_status` 已经替你处理）。
 - **cookie 会过期**：受控浏览器还登着的时候，`dy_login { action: "save" }` 重新导一次。
 - **新号风控严**：评论、发布小量、隔开。
+- **评论可能被风控拒绝**：`dy_comment` 返回 `{"comment": null, "status_code": 8}` 是平台拒绝写入，不是签名坏了
+  （2026-11-11 实测：页面签名直发、`dy3.mjs`、回复自家视频三条路都是同一个码，`get_my_profile` 也没有禁言标记）。
+  试一次就停，去 App 里确认账号状态，别循环重试。
 - 与抖音/字节跳动无关；个人使用，遵守对方条款、尊重别人隐私。看评论可以，别批量抓。
 
 ## 许可
